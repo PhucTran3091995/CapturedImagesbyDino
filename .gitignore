@@ -109,3 +109,4 @@ CapturedImages/
 *.log
 *.pdf
 debug_*.py
+*.exe

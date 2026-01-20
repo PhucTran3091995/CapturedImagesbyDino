@@ -8,6 +8,7 @@ class ImageBox(QWidget):
     Widget hiển thị một ô ảnh (thumbnail) với tiêu đề.
     """
     clicked = pyqtSignal(str) # Signal emit khi click vào box (optional hook)
+    right_clicked = pyqtSignal(object) # Signal emit khi right click, send self
 
     def __init__(self, title="Image", parent=None):
         super().__init__(parent)
@@ -30,7 +31,8 @@ class ImageBox(QWidget):
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet("background-color: #e0e0e0;") # Placeholder color
         self.image_label.setMinimumSize(80, 60) # Kích thước tối thiểu
-        self.image_label.setScaledContents(True)
+        self.image_label.setScaledContents(False) # Tắt auto-stretch làm méo ảnh
+
 
         # Label tiêu đề (VD: Top 1, Bot 1)
         self.title_label = QLabel(title)
@@ -43,18 +45,31 @@ class ImageBox(QWidget):
         self.layout.addWidget(self.frame)
         self.setLayout(self.layout)
     
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            self.right_clicked.emit(self)
+        super().mousePressEvent(event)
+    
     def set_image(self, image_path=None, cv_img=None):
         """
         Hiển thị ảnh lên label. Hỗ trợ cả đường dẫn file hoặc ảnh OpenCV.
         """
+        pixmap = None
         if cv_img is not None:
             # Convert OpenCV image (BGR) to QPixmap
             height, width, channel = cv_img.shape
             bytes_per_line = 3 * width
             q_img = QImage(cv_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888).rgbSwapped()
-            self.image_label.setPixmap(QPixmap.fromImage(q_img))
+            pixmap = QPixmap.fromImage(q_img)
         elif image_path:
-            self.image_label.setPixmap(QPixmap(image_path))
+            pixmap = QPixmap(image_path)
+        
+        if pixmap:
+            # Scale ảnh vừa khung nhưng giữ tỉ lệ
+            scaled_pixmap = pixmap.scaled(self.image_label.size(), 
+                                          Qt.AspectRatioMode.KeepAspectRatio, 
+                                          Qt.TransformationMode.SmoothTransformation)
+            self.image_label.setPixmap(scaled_pixmap)
         else:
             self.image_label.clear()
             self.image_label.setText("No Image")

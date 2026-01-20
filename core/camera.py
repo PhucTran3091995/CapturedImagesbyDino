@@ -15,35 +15,49 @@ class CameraThread(QThread):
         self.is_running = False
         self.cap = None
 
-    def find_dino_camera(self):
+    @staticmethod
+    def get_available_cameras():
         """
-        Tìm index của camera có tên chứa 'Dino' hoặc 'Microscope'.
-        Nếu không tìm thấy, trả về 0 hoặc None.
+        Trả về danh sách tất cả camera tìm thấy.
         """
         try:
             from pygrabber.dshow_graph import FilterGraph
             graph = FilterGraph()
-            devices = graph.get_input_devices()
+            return graph.get_input_devices()
+        except Exception as e:
+            print(f"Error listing cameras: {e}")
+            return []
+
+    def find_dino_camera(self):
+        """
+        Tìm index của camera có tên chứa 'Dino'.
+        """
+        try:
+            devices = CameraThread.get_available_cameras()
             print(f"Available cameras: {devices}")
             
             for i, device_name in enumerate(devices):
-                # Dino-Lite thường có tên chứa "Dino" hoặc "Digital Microscope"
-                if "Dino" in device_name or "Microscope" in device_name:
+                # Dino-Lite (Strict mode: Only "Dino" keyword)
+                if "Dino" in device_name:
                     print(f"Found Dino-Lite at index {i}: {device_name}")
                     return i
             
-            print("Dino-Lite not found. Using default camera.")
-            return 0
+            print("Dino-Lite not found. Strict mode enabled.")
+            return None
         except Exception as e:
             print(f"Error listing cameras: {e}")
-            return 0
+            return None
 
     def run(self):
         self.is_running = True
         
         # Auto-detect nếu không chỉ định ID cụ thể hoặc ID=0 (mặc định)
-        if self.camera_id is None or self.camera_id == 0:
+        if self.camera_id is None:
             target_id = self.find_dino_camera()
+            if target_id is None:
+                 self.status_update.emit("OFFLINE: Dino-Lite camera not found!")
+                 self.is_running = False
+                 return
             # Cập nhật camera_id thực tế
             self.camera_id = target_id
             
