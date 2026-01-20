@@ -12,7 +12,7 @@ class EmailSender:
         self.sender_email = sender_email
         self.password = password
 
-    def send_email(self, recipient_email, subject, body, attachment_path=None):
+    def send_email(self, recipient_email, subject, body, attachment_path=None, is_html=False):
         """
         Sends an email with an optional attachment.
         """
@@ -22,7 +22,8 @@ class EmailSender:
             msg['To'] = recipient_email
             msg['Subject'] = subject
 
-            msg.attach(MIMEText(body, 'plain'))
+            subtype = 'html' if is_html else 'plain'
+            msg.attach(MIMEText(body, subtype))
 
             if attachment_path and os.path.exists(attachment_path):
                 filename = os.path.basename(attachment_path)

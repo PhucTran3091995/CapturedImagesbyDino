@@ -708,15 +708,43 @@ class MainWindow(QMainWindow):
             password=self.config.get("password", "")
         )
         
+        # Format Subject: [QA] [Socket Inspection] [Model] [Socket Name] [Pass]
+        model_name = self.txt_model.text().strip() or "N/A"
+        socket_name = self.current_pid or "N/A"
+        inspector_name = self.txt_inspector.text().strip() or "N/A"
+        
+        subject = f"[QA] [Socket Inspection] [{model_name}] [{socket_name}] [PASS]"
+        
+        # Format Body (HTML)
+        body_html = f"""
+        <html>
+        <body>
+            <p>Dear Team,</p>
+            <p>Please find attached the inspection report for the following socket:</p>
+            <ul>
+                <li><b>Socket Name:</b> {socket_name}</li>
+                <li><b>Model:</b> {model_name}</li>
+                <li><b>Inspector:</b> {inspector_name}</li>
+                <li><b>Result:</b> <span style="color: green; font-weight: bold;">PASS</span></li>
+            </ul>
+            <p>Best regards,<br>QC Team</p>
+            <br>
+            <hr>
+            <p style="color: gray; font-size: small;"><i>Note: This is an automated email system. Please do not reply to this email.</i></p>
+        </body>
+        </html>
+        """
+        
         # UI Feedback - maybe show a progress dialog or simple wait cursor
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         self.update_status("Sending Email...")
         
         success, msg = sender.send_email(
             recipient_email=recipient,
-            subject=f"Inspection Report - {self.current_pid}",
-            body=f"Please find attached the inspection report for Socket: {self.current_pid}.\nModel: {self.txt_model.text()}\nInspector: {self.txt_inspector.text()}",
-            attachment_path=pdf_path
+            subject=subject,
+            body=body_html,
+            attachment_path=pdf_path,
+            is_html=True
         )
         
         QApplication.restoreOverrideCursor()

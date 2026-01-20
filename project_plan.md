@@ -1,5 +1,6 @@
 # Project Plan: Dino Capture App Restructuring
 
+
 ## Overview
 Restructure the capture workflow and PDF report generation to strictly follow the user's new requirements: 4 categories, 8 images per category, and specific PDF formatting with static NG examples.
 
