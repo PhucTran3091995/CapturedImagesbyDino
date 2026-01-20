@@ -16,7 +16,11 @@ from core.storage import StorageManager
 from core.storage import StorageManager
 from core.pdf_generator import PDFGenerator
 from core.dino_sdk import DNX64
+from core.email_sender import EmailSender
 from PyQt6.QtCore import QMetaObject, Q_ARG
+import json
+from PyQt6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox
+
 
 
 # Custom Application to intercept ALL events
@@ -60,20 +64,16 @@ class MainWindow(QMainWindow):
         
         # QC Categories Definition
         # Note: Index 0-6 are captured. Index 7 (Handwork) and 8 (Hole Fill) are manual/X-RAY.
+        # Custom QC Categories from User Request
         self.qc_categories = [
-            "1. Surface of PCB",
-            "2. Chip Part",
-            "3. Connector or QFP",
-            "4. Boss Hole",
-            "5. BGA, QFP, Connector",
-            "6. Around the PAD",
-            "8. Between IC Lead",
-            "Around the Handwork Parts", # Placeholder for PDF
-            "Hole Fill (X-Ray)"          # Placeholder for PDF
+            "1. Linh kiện của adapter",
+            "2. Bụi bẩn",
+            "3. Các chân tiếp xúc của socket",
+            "4. Các điểm tiếp nối"
         ]
-        # Total images captured is still 7 categories * 4 = 28. (First 7 items)
-        self.scan_categories_count = 7 
-        self.total_images = self.scan_categories_count * 4 
+        # Total images captured is 4 categories * 8 = 32.
+        self.scan_categories_count = 4 
+        self.total_images = self.scan_categories_count * 8 
         self.image_widgets = []
 
         
@@ -115,6 +115,10 @@ class MainWindow(QMainWindow):
         # Init Dino-Lite MicroTouch SDK
         self.init_dino_sdk()
 
+        # Load Config
+        self.config = self.load_config()
+
+
     def init_dino_sdk(self):
         """Initialize Dino-Lite SDK for MicroTouch"""
         try:
@@ -155,7 +159,7 @@ class MainWindow(QMainWindow):
         # Info Panel
         info_group = QGroupBox("Session Info")
         info_layout = QVBoxLayout()
-        self.lbl_pid = QLabel("PID: N/A")
+        self.lbl_pid = QLabel("Socket info: N/A")
         self.lbl_pid.setStyleSheet("font-size: 16px; font-weight: bold; color: blue;")
         self.lbl_status = QLabel("Status: Ready")
         
@@ -212,10 +216,20 @@ class MainWindow(QMainWindow):
         
         self.btn_export = QPushButton("Export PDF")
         self.btn_export.clicked.connect(self.export_pdf)
+
+        self.btn_email = QPushButton("Send Email")
+        self.btn_email.clicked.connect(self.send_email_action)
+        self.btn_email.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
         
+        self.btn_settings = QPushButton("Settings")
+        self.btn_settings.clicked.connect(self.open_settings_dialog)
+
         controls_layout.addWidget(self.btn_capture)
         controls_layout.addWidget(self.btn_reset)
         controls_layout.addWidget(self.btn_export)
+        controls_layout.addWidget(self.btn_email)
+        controls_layout.addWidget(self.btn_settings)
+
 
         left_layout.addWidget(info_group)
         left_layout.addWidget(self.live_view_label, stretch=1)
@@ -230,14 +244,12 @@ class MainWindow(QMainWindow):
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
         
+        # Updated QC Categories for display loop logic
         self.qc_categories = [
-            "1. Surface of PCB",
-            "2. Chip Part",
-            "3. Connector or QFP",
-            "4. Boss Hole",
-            "5. BGA, QFP, Connector",
-            "6. Around the PAD",
-            "8. Between IC Lead"
+            "1. Linh kiện của adapter",
+            "2. Bụi bẩn",
+            "3. Các chân tiếp xúc của socket",
+            "4. Các điểm tiếp nối"
         ]
         self.image_widgets = []
         
@@ -247,14 +259,17 @@ class MainWindow(QMainWindow):
             grid = QGridLayout()
             grid.setSpacing(5)
             
-            for i in range(4):
-                # 4 images per category
+            for i in range(8):
+                # 8 images per category
                 img_box = ImageBox(f"Pt {i+1}")
                 # Store index in widget for easy access
                 img_box.index = len(self.image_widgets)
                 img_box.right_clicked.connect(self.handle_image_right_click)
                 self.image_widgets.append(img_box)
-                grid.addWidget(img_box, 0, i) # 1 row, 4 columns
+                # Arrange: 2 rows of 4
+                row = i // 4
+                col = i % 4
+                grid.addWidget(img_box, row, col)
             
             group.setLayout(grid)
             scroll_layout.addWidget(group)
@@ -330,12 +345,23 @@ class MainWindow(QMainWindow):
         """Bắt đầu phiên làm việc mới khi scan được PID"""
         self.current_pid = pid
         self.is_scanning = False # Dừng scan
-        self.lbl_pid.setText(f"PID: {pid}")
-        self.update_status("PID Detected! Ready to Capture.")
+        self.lbl_pid.setText(f"Socket info: {pid}")
+        self.update_status("Socket info Detected! Ready to Capture.")
         
         # Tạo folder
         self.session_path = self.storage.create_session_folder(pid)
         print(f"Session folder: {self.session_path}")
+        
+        # Cleanup old images in this session folder if any
+        # This fixes the issue where previous session images show up in PDF
+        if os.path.exists(self.session_path):
+            import  glob
+            files = glob.glob(os.path.join(self.session_path, "*_*.jpg"))
+            for f in files:
+                try:
+                    os.remove(f)
+                except Exception as e:
+                    print(f"Failed to cleanup old image {f}: {e}")
 
     @pyqtSlot(str)
     def update_status(self, msg):
@@ -395,37 +421,23 @@ class MainWindow(QMainWindow):
             return
 
         if self.current_pid is None:
-            QMessageBox.warning(self, "Warning", "Please scan a PID first!")
+            QMessageBox.warning(self, "Warning", "Please scan a socket info first!")
             return
 
-        if self.current_image_count < 16:
-            # 0-7: Top, 8-15: Bot
+        if self.current_image_count < 32:
+            # Simple sequential logic if needed
             idx = self.current_image_count
-            is_top = idx < 8
-            
-            # Logic index và side
-            img_index = (idx + 1) if is_top else (idx - 8 + 1)
-            side = "top" if is_top else "bot"
-
-            # Lưu ảnh
-            saved_path = self.storage.save_image(self.session_path, self.current_frame, img_index, side)
-            
+            # ... (Logic below is actually unused because we use find_first_empty_slot logic mostly, but let's keep it consistent)
+             
             # Update UI Widget
-            if saved_path:
-                # Sound: Capture shutter
-                winsound.Beep(2000, 100) # 2000Hz, 100ms
-                if is_top:
-                    self.top_boxes[idx].set_image(image_path=saved_path)
-                else:
-                    self.bot_boxes[idx - 8].set_image(image_path=saved_path)
+            # Note: The legacy logic below (is_top/bot) was for 16 images. 
+            # With 32 images and grid, the loop logic in next block usually takes precedence.
+            pass 
             
-            self.current_image_count += 1
-            self.update_status(f"Captured {side.upper()} {img_index} ({self.current_image_count}/16)")
-            
-            if self.current_image_count == 16:
+            if self.current_image_count == 32:
                 QMessageBox.information(self, "Finished", "Session Completed! You can Export PDF now.")
         else:
-             QMessageBox.warning(self, "Full", "Completed 16 images. Please Export or start New Session.")
+             QMessageBox.warning(self, "Full", "Completed 32 images. Please Export or start New Session.")
 
     def set_info(self):
         """Khóa input và bắt đầu cho phép chụp"""
@@ -461,8 +473,8 @@ class MainWindow(QMainWindow):
         self.session_path = None
         self.is_scanning = True # Bật lại scan
         
-        self.lbl_pid.setText("PID: [Scanning...]")
-        self.update_status("Waiting for PID scan...")
+        self.lbl_pid.setText("Socket info: [Scanning...]")
+        self.update_status("Waiting for socket info scan...")
         
         # Reset Widgets
         for box in self.image_widgets:
@@ -527,15 +539,15 @@ class MainWindow(QMainWindow):
                 break
         
         if target_idx == -1:
-             QMessageBox.warning(self, "Full", "Session is Full (28 images). Please Export or start New Session.")
+             QMessageBox.warning(self, "Full", "Session is Full (32 images). Please Export or start New Session.")
              return
 
         # Use target_idx instead of current_image_count logic for position
         idx = target_idx
         
         # Determine Category and Point Index
-        cat_idx = idx // 4
-        point_idx = (idx % 4) + 1
+        cat_idx = idx // 8
+        point_idx = (idx % 8) + 1
         cat_name_raw = self.qc_categories[cat_idx]
         
         # Clean category name for filename
@@ -595,3 +607,124 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'input_listener'):
             self.input_listener.stop()
         event.accept()
+
+    def load_config(self):
+        config_path = "config.json"
+        default_config = {
+            "smtp_server": "smtp.gmail.com",
+            "smtp_port": 587,
+            "sender_email": "",
+            "password": "", # App Password
+            "recipient_email": ""
+        }
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    return json.load(f)
+            except:
+                return default_config
+        return default_config
+
+    def save_config(self, new_config):
+        try:
+            with open("config.json", 'w') as f:
+                json.dump(new_config, f, indent=4)
+            self.config = new_config
+        except Exception as e:
+            print(f"Error saving config: {e}")
+
+    def open_settings_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Email Settings")
+        layout = QFormLayout(dialog)
+        
+        txt_server = QLineEdit(self.config.get("smtp_server", "smtp.gmail.com"))
+        txt_port = QLineEdit(str(self.config.get("smtp_port", 587)))
+        txt_sender = QLineEdit(self.config.get("sender_email", ""))
+        txt_password = QLineEdit(self.config.get("password", ""))
+        txt_password.setEchoMode(QLineEdit.EchoMode.Password)
+        txt_recipient = QLineEdit(self.config.get("recipient_email", ""))
+        
+        layout.addRow("SMTP Server:", txt_server)
+        layout.addRow("Port:", txt_port)
+        layout.addRow("Sender Email:", txt_sender)
+        layout.addRow("Password (App Pwd):", txt_password)
+        layout.addRow("Default Recipient:", txt_recipient)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        
+        if dialog.exec():
+            new_conf = {
+                "smtp_server": txt_server.text(),
+                "smtp_port": int(txt_port.text()) if txt_port.text().isdigit() else 587,
+                "sender_email": txt_sender.text(),
+                "password": txt_password.text(),
+                "recipient_email": txt_recipient.text()
+            }
+            self.save_config(new_conf)
+            QMessageBox.information(self, "Saved", "Settings saved successfully!")
+
+    def send_email_action(self):
+        # 1. Check if we have a valid PDF Path from current session
+        # We need to know the generated PDF path. 
+        # Currently export_pdf generates it but doesn't store it in self. 
+        # Let's try to reconstruct it or ask user to export first.
+        
+        if not self.current_pid or not self.session_path:
+             QMessageBox.warning(self, "Warning", "No active session!")
+             return
+
+        # Infer PDF path
+        pdf_filename = f"{self.current_pid}_Report.pdf"
+        pdf_path = os.path.join(self.session_path, pdf_filename)
+        
+        if not os.path.exists(pdf_path):
+            # Try to auto-export first if not exists?
+            reply = QMessageBox.question(self, "PDF Not Found", "PDF Report not found. Export now?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                self.export_pdf()
+                if not os.path.exists(pdf_path):
+                    return # Still failed
+            else:
+                return
+
+        # 2. Get Config
+        recipient = self.config.get("recipient_email", "")
+        if not recipient:
+             text, ok = QLineEdit.getText(self, "Recipient", "Enter Recipient Email:")
+             if ok and text:
+                 recipient = text
+             else:
+                 return
+        
+        # 3. Send
+        sender = EmailSender(
+            smtp_server=self.config.get("smtp_server", "smtp.gmail.com"),
+            smtp_port=self.config.get("smtp_port", 587),
+            sender_email=self.config.get("sender_email", ""),
+            password=self.config.get("password", "")
+        )
+        
+        # UI Feedback - maybe show a progress dialog or simple wait cursor
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self.update_status("Sending Email...")
+        
+        success, msg = sender.send_email(
+            recipient_email=recipient,
+            subject=f"Inspection Report - {self.current_pid}",
+            body=f"Please find attached the inspection report for Socket: {self.current_pid}.\nModel: {self.txt_model.text()}\nInspector: {self.txt_inspector.text()}",
+            attachment_path=pdf_path
+        )
+        
+        QApplication.restoreOverrideCursor()
+        
+        if success:
+            QMessageBox.information(self, "Success", f"Email sent to {recipient}")
+            self.update_status("Email Sent Successfully.")
+        else:
+            QMessageBox.critical(self, "Error", f"Failed to send email:\n{msg}")
+            self.update_status("Email Sending Failed.")
+

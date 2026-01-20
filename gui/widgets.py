@@ -64,7 +64,7 @@ class ImageBox(QWidget):
         elif image_path:
             pixmap = QPixmap(image_path)
         
-        if pixmap:
+        if pixmap and not pixmap.isNull():
             # Scale ảnh vừa khung nhưng giữ tỉ lệ
             scaled_pixmap = pixmap.scaled(self.image_label.size(), 
                                           Qt.AspectRatioMode.KeepAspectRatio, 

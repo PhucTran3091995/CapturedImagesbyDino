@@ -26,23 +26,32 @@ class StorageManager:
             
         return session_path
 
-    def save_image(self, folder_path, image, index, side="top"):
+    def save_image(self, folder_path, image, prefix, suffix=""):
         """
         Lưu ảnh xuống đĩa.
         Args:
             folder_path: Đường dẫn thư mục lưu
             image: Ảnh OpenCV BGR
-            index: Số thứ tự ảnh (1-8)
-            side: "top" hoặc "bot"
+            prefix: Tiền tố tên file (hoặc category name)
+            suffix: Hậu tố tên file (hoặc index)
         Returns:
             str: Đường dẫn file đã lưu
         """
-        filename = f"{index}_{side}.jpg"
+        filename = f"{prefix}_{suffix}.jpg"
         file_path = os.path.join(folder_path, filename)
         
         try:
-            cv2.imwrite(file_path, image)
-            return file_path
+            # cv2.imwrite fails with unicode paths on Windows. 
+            # Solution: Encode to buffer and write to file.
+            success, buffer = cv2.imencode(".jpg", image)
+            if success:
+                mode = 'wb'
+                with open(file_path, mode) as f:
+                    f.write(buffer)
+                return file_path
+            else:
+                 print("Error encoding image")
+                 return None
         except Exception as e:
             print(f"Error saving image: {e}")
             return None

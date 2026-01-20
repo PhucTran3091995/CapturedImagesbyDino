@@ -11,198 +11,228 @@ class PDFGenerator:
     Class tạo báo cáo PDF từ các ảnh đã chụp.
     """
     def __init__(self):
-        pass
+        # Base path for static resources
+        self.base_path = os.getcwd() # Assumption: running from app root
+        self.pdf_image_path = os.path.join(self.base_path, "pdf image")
 
     def generate_report(self, pid, session_path, model_name="N/A", inspector_name="N/A"):
         """
-        Tạo file PDF báo cáo PCBA Quality Inspection Sheet.
-        Form giống như ảnh mẫu.
+        Tạo file PDF báo cáo Socket Inspection Report.
+        Format: 2 hàng x 4 cột ảnh cho mỗi mục. Full A4 page height.
         """
+        # Register Font
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        font_name = 'Helvetica'
+        try:
+            font_path = "C:\\Windows\\Fonts\\arial.ttf"
+            if os.path.exists(font_path):
+                pdfmetrics.registerFont(TTFont('Arial', font_path))
+                font_name = 'Arial'
+        except Exception:
+            pass
+
         pdf_filename = f"{pid}_Report.pdf"
         pdf_path = os.path.join(session_path, pdf_filename)
         
-        # Setup page landscape A4
+        # A4 Landscape: 297mm x 210mm (~11.7 x 8.3 inch)
+        # Margins: 0.2 inch
         doc = SimpleDocTemplate(pdf_path, pagesize=landscape(A4),
-                                rightMargin=10, leftMargin=10,
-                                topMargin=5, bottomMargin=5)
+                                rightMargin=0.2*inch, leftMargin=0.2*inch,
+                                topMargin=0.2*inch, bottomMargin=0.2*inch)
         
         elements = []
         styles = getSampleStyleSheet()
         
+        title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName=font_name, fontSize=20, spaceAfter=5)
+        info_style = ParagraphStyle('Info', parent=styles['Normal'], fontName=font_name, fontSize=11, leading=14)
+        
         # --- TITLE ---
-        title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, spaceAfter=0)
-        
-        # Header Table (Info)
-        # Format:
-        # PCBA Quality Inspection Sheet               Date: ...
-        # 1. Model(SMT): ...
-        # 2. PID(SMT): ...
-        # ...
-        
         date_str = datetime.now().strftime("%d , %m , %Y")
         
-        header_data = [
-            [Paragraph("PCBA Quality Inspection Sheet", title_style), "", f"Date :  {date_str}"],
-            ["1. Model(SMT) :", model_name, ""],
-            ["2. PID(SMT) :", pid, ""],
-            ["3. Inspector(SMT) :", inspector_name, ""],
-            ["4. Inspection Points :", Paragraph("SMT – Flux Impurities, Pin Hole, Bridge, Via Hole, Impurities, Solder Ball<br/>PCBA – Solder Ball, Coating", styles['Normal']), ""]
+        header_table_data = [
+            [Paragraph("Socket Inspection Report", title_style), 
+             Paragraph(f"Date :  {date_str}", ParagraphStyle('Date', parent=styles['Normal'], fontName=font_name, fontSize=12, alignment=2))]
         ]
+        t_title = Table(header_table_data, colWidths=[8*inch, 3.2*inch])
+        t_title.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        elements.append(t_title)
+        elements.append(Spacer(1, 0.1*inch))
         
-        t_header = Table(header_data, colWidths=[2*inch, 5*inch, 3*inch])
-        t_header.setStyle(TableStyle([
-            ('SPAN', (0,0), (1,0)), # Span Title
-            ('ALIGN', (2,0), (2,0), 'RIGHT'), # Date align right
-            ('FONTSIZE', (0,0), (-1,-1), 9), # Reduce font size
-            ('VALIGN', (0,0), (-1,-1), 'TOP'),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 1), # Reduce padding
-            ('TOPPADDING', (0,0), (-1,-1), 1),
-        ]))
-        elements.append(t_header)
-        elements.append(Spacer(1, 2)) # Smaller spacer
+        # --- INFO ---
+        elements.append(Paragraph(f"1.&nbsp;&nbsp;&nbsp;Socket Infor : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{pid}", info_style))
+        elements.append(Paragraph(f"2.&nbsp;&nbsp;&nbsp;Inspector(IQC) : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{inspector_name}", info_style))
+        # Shorten text to fit line if needed or keep full
+        inspection_points_text = "Linh kiện của adapter, Bụi bẩn, Các chân tiếp xúc của socket, Các điểm tiếp nối"
+        elements.append(Paragraph(f"3.&nbsp;&nbsp;&nbsp;Inspection Points : &nbsp;&nbsp;&nbsp;{inspection_points_text}", info_style))
+        
+        elements.append(Spacer(1, 0.15*inch))
 
         # --- MAIN TABLE ---
-        # Columns: Dept, Subject, Item, Criteria, NG Example, Inspection Point (4 cols), Result, Note
-        # Headers spanning logic is complex, so we will build row by row.
+        # Structure:
+        # Dept(3) | Item | Criteria | NGEx | P1 | P2 | P3 | P4 | Result | Note
+        # 12 Columns Total
         
-        # Helper to get image or placeholder
-        def get_image(filename):
-            path = os.path.join(session_path, filename)
+        def get_captured_image(cat_idx, point_idx):
+            cat_names = [
+                "1_Linh_kiện_của_adapter", "2_Bụi_bẩn",
+                "3_Các_chân_tiếp_xúc_của_socket", "4_Các_điểm_tiếp_nối"
+            ]
+            if cat_idx < 0 or cat_idx >= len(cat_names): return ""
+            target_suffix = f"{cat_names[cat_idx]}_{point_idx}.jpg"
+            
+            # Find file
+            found_file = None
+            if os.path.exists(session_path):
+                for f in os.listdir(session_path):
+                    if f.endswith(target_suffix):
+                        found_file = os.path.join(session_path, f)
+                        break
+            
+            if found_file:
+                # Resize logic: 
+                # Cell size is roughly 1.3 inch width, 0.65 inch height (reduced to fit page)
+                img = Image(found_file)
+                img.drawHeight = 0.58 * inch 
+                img.drawWidth = 1.0 * inch # Slightly narrower to be safe
+                return img
+            return ""
+
+        def get_static_image(filename):
+            path = os.path.join(self.pdf_image_path, filename)
             if os.path.exists(path):
                 img = Image(path)
-                img.drawHeight = 0.55 * inch # Reduced height
-                img.drawWidth = 0.85 * inch
+                img.drawHeight = 1.15 * inch # Fit within 2 rows of 0.65 (1.3 total)
+                img.drawWidth = 1.1 * inch 
                 return img
-            return "" # Empty if missing
+            return "Image not found"
 
-        # Row Data Structure
-        # 0: Dept, 1: Subject, 2: Item, 3: Criteria, 4: NG Ex, 5,6,7,8: Insp Pts, 9: Result, 10: Note
-        
-        # Define rows content
-        # Cat 1: Surface
-        row_surface = [
-            "SMT\n\nMicroscope\nInspection", # Dept (will span)
-            "Flux\nImpurities", "Surface of PCB", "No fallen Flux", "",
-            get_image("1_Surface_of_PCB_1.jpg"), get_image("1_Surface_of_PCB_2.jpg"), 
-            get_image("1_Surface_of_PCB_3.jpg"), get_image("1_Surface_of_PCB_4.jpg"),
-            "PASS", ""
+        # Headers
+        # Span Pts 1-4 (cols 6-9)
+        header_row = [
+            "Dept.", "", "", 
+            "Item", "Criteria", "NG Example", 
+            "Inspection Point (8 Point)", "", "", "", 
+            "Result", "Note"
         ]
         
-        # Cat 2: Chip
-        row_chip = [
-            "", # Spanned
-            "Pin Hole", "Chip Part", "No Pin Hole", "",
-            get_image("2_Chip_Part_1.jpg"), get_image("2_Chip_Part_2.jpg"), 
-            get_image("2_Chip_Part_3.jpg"), get_image("2_Chip_Part_4.jpg"),
-            "PASS", ""
+        # We have 4 Categories (Items). Each Item has 2 Rows.
+        # Total Data Rows: 8 rows.
+        # Plus Header: 1 row.
+        # Total Table Rows: 9 rows.
+        
+        # Dept text only on first row, will span down 8 rows.
+        
+        data = [header_row]
+        
+        categories_info = [
+            ("Linh kiện của\nadapter", "Không vỡ,\nkhông cầu", "Adapter Components.png"),
+            ("Bụi bẩn", "Không có dị\nvật, không có\nbụi bẩn", "Foreign material.png"),
+            ("Các chân tiếp xúc\ncủa socket", "Không biến\ndạng, không\nxước, không\nhỏng", "Pin.png"),
+            ("Các điểm tiếp nối", "Không biến\ndạng, không\nxước, không\nhỏng", "Pad.png")
         ]
         
-        # Cat 3: Bridge
-        row_bridge = [
-            "", "Bridge", "QFP or\nConnector", "No Bridge", "",
-            get_image("3_Connector_or_QFP_1.jpg"), get_image("3_Connector_or_QFP_2.jpg"), 
-            get_image("3_Connector_or_QFP_3.jpg"), get_image("3_Connector_or_QFP_4.jpg"),
-            "PASS", ""
-        ]
+        dept_texts = ["Non-\nDestructive\nInspection", "IQC", "Microscope\nInspection"]
         
-        # Cat 4: Via Hole
-        row_via = [
-            "", "Via hole", "Boss Hole", "No Decolor-\nation\nNo Corrosion", "",
-            get_image("4_Boss_Hole_1.jpg"), get_image("4_Boss_Hole_2.jpg"), 
-            get_image("4_Boss_Hole_3.jpg"), get_image("4_Boss_Hole_4.jpg"),
-            "PASS", ""
-        ]
-        
-        # Cat 5: Impurities
-        row_impur = [
-            "", "Impurities", "BGA or QFP\nor Connector", "No Dirt, No Lint,\nNo Dross", "",
-            get_image("5_BGA_QFP_Connector_1.jpg"), get_image("5_BGA_QFP_Connector_2.jpg"), 
-            get_image("5_BGA_QFP_Connector_3.jpg"), get_image("5_BGA_QFP_Connector_4.jpg"),
-            "PASS", ""
-        ]
-        
-        # Cat 6: Solder Ball (Around PAD)
-        row_ball1 = [
-            "", "Solder Ball", "Around the PAD", "Size : < 0.13mm\nQty : < 5ea/600mm²", "",
-            get_image("6_Around_the_PAD_1.jpg"), get_image("6_Around_the_PAD_2.jpg"), 
-            get_image("6_Around_the_PAD_3.jpg"), get_image("6_Around_the_PAD_4.jpg"),
-            "PASS", ""
-        ]
-        
-        # Cat 7: Solder Ball (Handwork) - PCBA Dept starts here? No, in template PCBA starts later. 
-        # Wait, template says "Non-Destructive Inspection" covers all.
-        # But Dept column splits 'SMT' and 'PCBA'.
-        # Let's adjust based on template row counts.
-        # SMT covers row 1-6. PCBA covers row 7-9.
-        
-        # Cat 7 (Manual/Skipped): Around Handwork Parts
-        row_handwork = [
-            "PCBA\n\nMicroscope\nInspection", "Solder Ball", "Around the\nHandwork Parts", "Size : < 0.13mm\nQty : < 5ea/600mm²", "",
-            "", "", "", "", # Empty images
-            "N/A", "No\nhandwork\npart"
-        ]
-        
-        # Cat 8 (Captures): Between IC Lead (Coating)
-        row_coating = [
-            "", "Coating", "Between IC\nLead\n(Ex : QFP)", "Bubble Dia < 50%\nof Clearance\n(20x Mag)", "",
-            get_image("8_Between_IC_Lead_1.jpg"), get_image("8_Between_IC_Lead_2.jpg"), 
-            get_image("8_Between_IC_Lead_3.jpg"), get_image("8_Between_IC_Lead_4.jpg"),
-            "PASS", ""
-        ]
-        
-        # Cat 9 (XRay): Hole Fill
-        row_hole = [
-            "X-Ray\nInspection", "Hole Fill", "Insertion Parts", "Filing Rate :\n75% or More", "",
-            "", "", "", "",
-            "PASS", ""
-        ]
+        for cat_idx, (item, criteria, ng_img) in enumerate(categories_info):
+            # Row 1 of Item
+            row1 = [
+                dept_texts[0] if cat_idx == 0 else "",
+                dept_texts[1] if cat_idx == 0 else "",
+                dept_texts[2] if cat_idx == 0 else "",
+                item, criteria, get_static_image(ng_img),
+                # Images 1-4
+                get_captured_image(cat_idx, 1), get_captured_image(cat_idx, 2),
+                get_captured_image(cat_idx, 3), get_captured_image(cat_idx, 4),
+                "PASS", ""
+            ]
+            
+            # Row 2 of Item
+            row2 = [
+                "", "", "", 
+                "", "", "", # Spanned cells
+                # Images 5-8
+                get_captured_image(cat_idx, 5), get_captured_image(cat_idx, 6),
+                get_captured_image(cat_idx, 7), get_captured_image(cat_idx, 8),
+                "", "" # Spanned Result/Note
+            ]
+            data.append(row1)
+            data.append(row2)
 
-        # Table Header Row
-        headers = ["Dept.", "Subject", "Item", "Criteria", "NG Example", "Inspection Point (4 Point)", "", "", "", "Result", "Note"]
-        
-        data = [headers, row_surface, row_chip, row_bridge, row_via, row_impur, row_ball1, row_handwork, row_coating, row_hole]
-        
         # Column Widths
-        # Total A4 Landscape Width ~ 11.7 inch. Margins 0.5 inch total. Usable ~11 inch.
-        # Cols: 0.8, 0.8, 1.0, 1.5, 0.8, 0.9*4=3.6, 0.5, 1.0
-        c_widths = [0.8*inch, 0.8*inch, 1.1*inch, 1.6*inch, 0.9*inch, 0.9*inch, 0.9*inch, 0.9*inch, 0.9*inch, 0.6*inch, 1.0*inch]
+        # Page usable width ~11.3 inch
+        # Dept(3): 0.6, 0.4, 0.7 = 1.7
+        # Item: 1.1
+        # Criteria: 1.1
+        # NGEx: 1.3
+        # Pt(4): 1.2 * 4 = 4.8
+        # Result: 0.6
+        # Note: 0.7
+        # Total: 11.3 -> Perfect
         
-        t = Table(data, colWidths=c_widths)
+        col_widths = [
+            0.6*inch, 0.4*inch, 0.7*inch,
+            1.1*inch, 1.1*inch, 1.3*inch,
+            1.2*inch, 1.2*inch, 1.2*inch, 1.2*inch,
+            0.6*inch, 0.7*inch
+        ]
         
-        # Styles
+        # Row Heights
+        # Reduce rows to fit one page.
+        # Header 0.4.
+        # Rows: 0.65 * 8 = 5.2.
+        # Total = 5.6 inch Table.
+        row_heights = [0.4*inch] + [0.65*inch]*8 
+        
+        t = Table(data, colWidths=col_widths, rowHeights=row_heights)
+        
+        # Styling
         style = [
-            ('GRID', (0,0), (-1,-1), 1, colors.black),
+            ('GRID', (0,0), (-1,-1), 1, colors.grey),
+            ('FONTNAME', (0,0), (-1,-1), font_name),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('ALIGN', (0,0), (-1,-1), 'CENTER'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             
             # Header
             ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('SPAN', (5,0), (8,0)), # Merge "Inspection Point (4 Point)" header
+            ('SPAN', (0,0), (2,0)), # Merge Dept Header
+            ('SPAN', (6,0), (9,0)), # Merge Inspection Point Header (cols 6,7,8,9)
             
-            # Spans for Dept 'SMT' (Rows 1-6) -> Index 1 to 6
-            ('SPAN', (0,1), (0,6)), 
-            # Spans for Dept 'PCBA' (Rows 7-8) -> Index 7 to 8
-            ('SPAN', (0,7), (0,8)),
-            
-            # Merge Images cells into one block? No, keep separate 4 cells.
-            
-            # Text Wrap for Criteria
-            # ('WORDWRAP', (3,1), (3,-1)), # Reportlab table auto wraps if Paragraph used, but str wraps on space.
+            # Dept Vertical Spans (All 8 data rows: 1 to 8)
+            ('SPAN', (0,1), (0,8)),
+            ('SPAN', (1,1), (1,8)),
+            ('SPAN', (2,1), (2,8)),
         ]
         
-        # Color specific cells (Note column green for N/A)
-        # Row 7 (Handwork) Result N/A -> Note Green text?
-        # Let's just keep simple text.
+        # Loop to add spans for each Category (2 rows each)
+        # Cat 0: Rows 1-2
+        # Cat 1: Rows 3-4
+        # ...
+        for i in range(4):
+            start_row = 1 + i*2
+            end_row = start_row + 1
+            # Item
+            style.append(('SPAN', (3, start_row), (3, end_row)))
+            # Criteria
+            style.append(('SPAN', (4, start_row), (4, end_row)))
+            # NG Example
+            style.append(('SPAN', (5, start_row), (5, end_row)))
+            # Result
+            style.append(('SPAN', (10, start_row), (10, end_row)))
+            # Note
+            style.append(('SPAN', (11, start_row), (11, end_row)))
         
         t.setStyle(TableStyle(style))
-        
         elements.append(t)
         
         # Footer
-        elements.append(Spacer(1, 10))
-        elements.append(Paragraph("Inspect periodically (AOI Inspector)", styles['Normal']))
-        elements.append(Paragraph("Report any problems during inspection immediately (Managers / Supervisors)", styles['Normal']))
+        elements.append(Spacer(1, 0.1*inch)) # Reduced spacer
+        elements.append(Paragraph("Inspect periodically (IQC Inspector)", 
+                                  ParagraphStyle('Footer', parent=styles['Normal'], fontName=font_name, fontSize=10)))
+        elements.append(Paragraph("Report any problems during inspection immediately (Managers / Supervisors)", 
+                                  ParagraphStyle('Footer2', parent=styles['Normal'], fontName=font_name, fontSize=10)))
 
         try:
             doc.build(elements)
@@ -210,4 +240,6 @@ class PDFGenerator:
             return pdf_path
         except Exception as e:
             print(f"Error generating PDF: {e}")
+            import traceback
+            traceback.print_exc()
             return None
