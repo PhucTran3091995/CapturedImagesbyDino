@@ -1,7 +1,40 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QDialog, QScrollArea, QSizePolicy
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
 import cv2
+
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal()
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+class ZoomDialog(QDialog):
+    def __init__(self, image_path, title="Zoom Image", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(800, 600)
+        
+        layout = QVBoxLayout(self)
+        
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        
+        img_label = QLabel()
+        img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        pixmap = QPixmap(image_path)
+        if not pixmap.isNull():
+            img_label.setPixmap(pixmap)
+            # Adjust window size if image is smaller
+            if pixmap.width() < 800 and pixmap.height() < 600:
+                self.resize(pixmap.width() + 50, pixmap.height() + 50)
+        else:
+            img_label.setText("Image not found")
+            
+        scroll_area.setWidget(img_label)
+        layout.addWidget(scroll_area)
 
 class ImageBox(QWidget):
     """
@@ -44,6 +77,9 @@ class ImageBox(QWidget):
 
         self.layout.addWidget(self.frame)
         self.setLayout(self.layout)
+        
+        # FIX: Set fixed size to avoid ugly stretching when maximized
+        self.setFixedSize(110, 90)
     
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.RightButton:

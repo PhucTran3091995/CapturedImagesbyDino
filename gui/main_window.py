@@ -9,7 +9,7 @@ import winsound # For sound effects
 import threading
 from pynput import mouse, keyboard
 
-from gui.widgets import ImageBox
+from gui.widgets import ImageBox, ClickableLabel, ZoomDialog
 from core.camera import CameraThread
 from core.scanner import Scanner
 from core.storage import StorageManager
@@ -59,7 +59,7 @@ class GlobalInputListener:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Dino Capture App")
+        self.setWindowTitle("Socket Inspection App")
         self.setGeometry(100, 100, 1200, 800)
         
         # QC Categories Definition
@@ -253,11 +253,72 @@ class MainWindow(QMainWindow):
         ]
         self.image_widgets = []
         
+        
+        # NG Example Images Map (based on PDF Generator logic)
+        ng_images_map = {
+             0: "Adapter Components.png",
+             1: "Foreign material.png",
+             2: "Pin.png",
+             3: "Pad.png"
+        }
+        pdf_img_dir = os.path.join(os.getcwd(), "pdf image")
+
         for cat_idx in range(self.scan_categories_count):
             cat_name = self.qc_categories[cat_idx]
             group = QGroupBox(cat_name)
-            grid = QGridLayout()
+            
+            # Use HBox to separate NG Example (Left) and Captured Images (Right)
+            group_layout = QHBoxLayout()
+            
+            # --- LEFT: NG Example Column ---
+            ng_container = QWidget()
+            ng_layout = QVBoxLayout(ng_container)
+            ng_layout.setContentsMargins(0, 0, 0, 0) # Right margin for spacing
+            
+            lbl_ng_title = QLabel("NG Example")
+            lbl_ng_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_ng_title.setStyleSheet("font-weight: bold; color: #D32F2F; font-size: 11px;")
+            
+            lbl_ng_img = ClickableLabel()
+            lbl_ng_img.setFixedSize(160, 120) # Slightly larger than captured thumbs
+            lbl_ng_img.setScaledContents(True)
+            lbl_ng_img.setStyleSheet("border: 2px solid #D32F2F; background-color: #f0f0f0; cursor: pointer;")
+            lbl_ng_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Load Image
+            img_filename = ng_images_map.get(cat_idx, "")
+            current_ng_path = ""
+            if img_filename:
+                img_path = os.path.join(pdf_img_dir, img_filename)
+                if os.path.exists(img_path):
+                    current_ng_path = img_path
+                    pix = QPixmap(img_path)
+                    if not pix.isNull():
+                        lbl_ng_img.setPixmap(pix)
+                    else:
+                        lbl_ng_img.setText("Invalid Img")
+                else:
+                    lbl_ng_img.setText("Not Found")
+            else:
+                lbl_ng_img.setText("No Ref")
+
+            # Connect click signal using lambda to pass path
+            if current_ng_path:
+                # Need to capture current_ng_path in lambda default arg or it binds to last loop var
+                lbl_ng_img.clicked.connect(lambda p=current_ng_path: self.show_zoom_dialog(p))
+
+            ng_layout.addWidget(lbl_ng_title)
+            ng_layout.addWidget(lbl_ng_img)
+            ng_layout.addStretch() # Push to top
+            
+            group_layout.addWidget(ng_container)
+
+            # --- RIGHT: Captured Images Grid ---
+            grid_container = QWidget()
+            grid = QGridLayout(grid_container)
             grid.setSpacing(5)
+            # Remove margins on grid container to align well
+            grid.setContentsMargins(0, 0, 0, 0)
             
             for i in range(8):
                 # 8 images per category
@@ -271,7 +332,9 @@ class MainWindow(QMainWindow):
                 col = i % 4
                 grid.addWidget(img_box, row, col)
             
-            group.setLayout(grid)
+            group_layout.addWidget(grid_container)
+            
+            group.setLayout(group_layout)
             scroll_layout.addWidget(group)
             
         scroll_layout.addStretch() # Push everything up
@@ -601,6 +664,13 @@ class MainWindow(QMainWindow):
             filled_count = sum(1 for w in self.image_widgets if w.image_label.pixmap() is not None and not w.image_label.pixmap().isNull())
             self.current_image_count = filled_count
             self.update_status(f"Image Deleted. ({filled_count}/{self.total_images})")
+
+    def show_zoom_dialog(self, image_path):
+        """Show the image in a larger dialog"""
+        if not image_path or not os.path.exists(image_path):
+            return
+        dialog = ZoomDialog(image_path, parent=self)
+        dialog.exec()
 
     def closeEvent(self, event):
         self.camera_thread.stop()
